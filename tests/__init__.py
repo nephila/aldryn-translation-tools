@@ -12,13 +12,19 @@ from django.test import RequestFactory, TransactionTestCase
 from django.utils.translation import override
 
 from cms import api
-from cms.models import Title
 from cms.utils.conf import get_cms_setting
 from cms.utils.i18n import get_language_list
 
 from djangocms_helper.utils import create_user
 from parler.utils.context import switch_language
 from test_addon.models import Simple, Untranslated
+
+cms_v4_plus = False
+try:
+    from cms.models import Title
+except ImportError:
+    from cms.models import PageContent as Title
+    cms_v4_plus = True
 
 
 class TestUtilityMixin(object):
@@ -131,13 +137,23 @@ class CMSRequestBasedTest(TestUtilityMixin, TransactionTestCase):
             apphook_namespace='simple',
         )
 
-        self.placeholder = self.page.placeholders.all()[0]
+        if cms_v4_plus:
+            self.placeholder = self.page.get_placeholders(self.language)[0]
+        else:
+            self.placeholder = self.page.placeholders.all()[0]
+
         self.request = self.get_request('en')
 
         for page in [self.root_page, self.page]:
             for language, _ in settings.LANGUAGES[1:]:
-                api.create_title(language, page.get_slug(), page)
-                page.publish(language)
+                if cms_v4_plus:
+                    slug = page.get_slug(language)
+                else:
+                    slug = page.get_slug()
+                api.create_title(language, slug, page)
+                # Publishing is an optional package in v4
+                if not cms_v4_plus:
+                    page.publish(language)
 
     @classmethod
     def get_request(cls, language=None, url="/"):
@@ -165,6 +181,9 @@ class CMSRequestBasedTest(TestUtilityMixin, TransactionTestCase):
         # If there is already a page with this title, just return it.
         try:
             page_title = Title.objects.get(title=base_title)
+            # Publishing is an optional package in v4
+            if cms_v4_plus:
+                return page_title.page
             return page_title.page.get_draft_object()
         except Exception:
             pass
@@ -176,7 +195,12 @@ class CMSRequestBasedTest(TestUtilityMixin, TransactionTestCase):
             for lang in languages[1:]:
                 title_lang = "{0}-{1}".format(base_title, lang)
                 create_title(language=lang, title=title_lang, page=page)
-                page.publish(lang)
+                # Publishing is an optional package in v4
+                if not cms_v4_plus:
+                    page.publish(lang)
+
+        if not cms_v4_plus:
+            return page
         return page.get_draft_object()
 
     def get_page_request(
